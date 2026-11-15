@@ -182,3 +182,16 @@ for _mk in feeds/smpackage/speedtest-web/Makefile \
 	sed -i 's/^PKG_MIRROR_HASH:=.*/PKG_MIRROR_HASH:=skip/' "$_mk"
 	echo "[diy] speedtest-web 哈希校验已跳过: $(grep '^PKG_MIRROR_HASH' "$_mk" | head -1)"
 done
+
+# ===== speedtest-web 的 upx 压缩禁用（双保险） =====
+# 现象：compile 阶段 Error 127
+#   /mnt/openwrt/staging_dir/host/bin/upx --lzma --best ...
+#   bash: /mnt/openwrt/staging_dir/host/bin/upx: No such file or directory
+# 原因：SPEEDTEST_WEB_COMPRESS_UPX 默认 y，构建机没有 upx host 工具。
+# 处理：把 upx 调用替换为 /bin/true（无操作），配置里同时显式关闭该符号。
+for _mk in feeds/smpackage/speedtest-web/Makefile \
+           package/feeds/smpackage/speedtest-web/Makefile; do
+	[ -f "$_mk" ] || continue
+	sed -i 's|/bin/upx --lzma --best|/bin/true|' "$_mk"
+	echo "[diy] speedtest-web upx 压缩已禁用: $(grep -c '/bin/true' "$_mk") 处"
+done
