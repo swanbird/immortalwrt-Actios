@@ -1,0 +1,42 @@
+#!/bin/sh
+# 升级 Home Assistant 到最新稳定版（保留 /config 数据）
+# 原理：拉取最新的 :stable 镜像，用同样的参数重建容器，配置目录是挂载卷不受影响
+
+IMAGE_REF="${HA_IMAGE:-ghcr.nju.edu.cn/home-assistant/home-assistant:stable}"
+IMAGE_LOCAL="homeassistant:stable"
+NAME="homeassistant"
+CFG_DIR="/opt/homeassistant/config"
+
+if ! docker info >/dev/null 2>&1; then
+	echo "dockerd 未运行，请先执行 /etc/init.d/dockerd start"
+	exit 1
+fi
+
+OLD=$(cat "$CFG_DIR/.HA_VERSION" 2>/dev/null || echo 未知)
+echo "当前版本：$OLD"
+
+# 保留一份旧镜像，便于回退
+if docker image inspect "$IMAGE_LOCAL" >/dev/null 2>&1; then
+	docker tag "$IMAGE_LOCAL" "homeassistant:prev" 2>/dev/null && \
+		echo "旧镜像已标记为 homeassistant:prev"
+fi
+
+echo "拉取最新 stable ..."
+if ! docker pull "$IMAGE_REF"; then
+	echo "拉取失败，保持当前版本不变"
+	exit 1
+fi
+docker tag "$IMAGE_REF" "$IMAGE_LOCAL"
+
+docker stop "$NAME" >/dev/null 2>&1
+docker rm "$NAME" >/dev/null 2>&1
+
+docker run -d --name "$NAME" --restart unless-stopped --network host \
+	-v "$CFG_DIR":/config \
+	-e TZ=Asia/Shanghai \
+	"$IMAGE_LOCAL" >/dev/null
+
+NEW=$(docker image inspect -f '{{index .Config.Labels "io.hass.version"}}' "$IMAGE_LOCAL" 2>/dev/null)
+echo "升级完成：$OLD -> ${NEW:-最新}"
+echo "配置目录 $CFG_DIR 保持不变，容器启动后约 1-2 分钟可用"
+echo "如需回退： docker rm -f $NAME && docker tag homeassistant:prev $IMAGE_LOCAL && 重新 run 同样的参数"
