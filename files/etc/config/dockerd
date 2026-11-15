@@ -1,0 +1,11 @@
+config globals 'globals'
+	option data_root '/opt/docker/'
+	option log_level 'warn'
+	option iptables '0'
+	option alt_config_file '/etc/docker/daemon.json'
+
+config proxies 'proxies'
+
+config firewall 'firewall'
+	option device 'docker0'
+	list blocked_interfaces 'wan'
