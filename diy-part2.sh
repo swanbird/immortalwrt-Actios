@@ -195,3 +195,29 @@ for _mk in feeds/smpackage/speedtest-web/Makefile \
 	sed -i 's|/bin/upx --lzma --best|/bin/true|' "$_mk"
 	echo "[diy] speedtest-web upx 压缩已禁用: $(grep -c '/bin/true' "$_mk") 处"
 done
+
+# ===== 补入 modeminfo CLI（luci-app-modeminfo 的 postinst 依赖） =====
+# 现象：所有包编译完成后，在 package/install 阶段中断
+#   luci-app-modeminfo.postinst-pkg: line 2: /usr/bin/modeminfo: No such file or directory
+#   postinst script has failed with exit code 127
+# 原因：4IceG/luci-app-modeminfo 只是前端（DEPENDS 仅 +comgt），调用 /usr/bin/modeminfo
+#       的 CLI 是独立包，不存在于任何已配置的 feed（smpackage/packages/openstick 均无）。
+# 处理：从 kenzok8/jell（smpackage 作者的另一个仓库）稀疏检出 modeminfo CLI，
+#       并由 config 显式启用 CONFIG_PACKAGE_modeminfo=y。
+if [ ! -d package/modeminfo ]; then
+	echo "[diy] 补入 modeminfo CLI（luci-app-modeminfo 依赖）"
+	rm -rf /tmp/jell-src
+	if git clone --depth 1 --filter=blob:none --sparse \
+		https://github.com/kenzok8/jell /tmp/jell-src >/dev/null 2>&1; then
+		( cd /tmp/jell-src && git sparse-checkout set modeminfo ) >/dev/null 2>&1
+		if [ -f /tmp/jell-src/modeminfo/Makefile ]; then
+			cp -r /tmp/jell-src/modeminfo package/modeminfo
+			echo "[diy] modeminfo CLI 已就位，共 $(find package/modeminfo -type f | wc -l) 个文件"
+		else
+			echo "[diy] 警告：稀疏检出未得到 modeminfo 目录"
+		fi
+	else
+		echo "[diy] 警告：克隆 kenzok8/jell 失败，luci-app-modeminfo 的 postinst 可能仍会失败"
+	fi
+	rm -rf /tmp/jell-src
+fi
