@@ -27,3 +27,11 @@ sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' feeds/luci/collections/luci/M
 # git clone https://github.com/gSpotx2f/luci-app-cpu-status-mini package/luci-app-cpu-status-mini
 # git clone https://github.com/lkiuyu/luci-app-temp-status package/luci-app-temp-status
 # git clone https://github.com/lkiuyu/DbusSmsForwardCPlus package/DbusSmsForwardCPlus
+
+# ===== 补充：不在官方 feed / small-package 中的三个插件（按用户清单要求） =====
+# luci-app-temp-status：gSpotx2f 上游，取 lkiuyu 的适配版
+git clone --depth 1 https://github.com/lkiuyu/luci-app-temp-status package/luci-app-temp-status || true
+# luci-app-modeminfo：4IceG 上游，依赖 comgt（feed 内已有）
+git clone --depth 1 https://github.com/4IceG/luci-app-modeminfo package/luci-app-modeminfo || true
+# luci-app-atinout + atinout 命令行工具：仓库根目录下含两个包，整体克隆
+git clone --depth 1 https://github.com/4IceG/luci-app-atinout package/atinout-src || true
