@@ -5,4 +5,21 @@
 # cd /root/picoclaw && ./picoclaw-launcher -public > /root/picoclaw/picoclaw.log 2>&1 &
 # SimAdmin 这个是管理sim手机卡的程序，开源地址：https://github.com/3899/SimAdmin
 # cd /root/simadmin && ./simadmin > /root/simadmin/simadmin.log 2>&1 &
+# ---- WiFi 终端互通：强制关闭 AP 隔离（isolate=0）----
+# 默认 wifi-iface 不含 isolate 选项（即 ap_isolate=0）。此处仅作保险：
+# 若门户/切卡等脚本把 isolate 置 1，启动时复位并重载，保证局域网终端可互访。
+if command -v uci >/dev/null 2>&1; then
+	_iso_changed=0
+	for _w in $(uci -q show wireless 2>/dev/null | sed -n 's/^wireless\.\([^.]*\)=wifi-iface$/\1/p'); do
+		if [ "$(uci -q get wireless.$_w.isolate)" = "1" ]; then
+			uci -q set wireless.$_w.isolate='0'
+			_iso_changed=1
+		fi
+	done
+	if [ "$_iso_changed" = "1" ]; then
+		uci -q commit wireless
+		wifi reload
+	fi
+fi
+
 exit 0
