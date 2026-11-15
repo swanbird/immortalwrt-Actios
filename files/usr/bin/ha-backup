@@ -1,0 +1,48 @@
+#!/bin/sh
+# 备份 Home Assistant 配置（含 SQLite 历史库），默认先暂停容器保证数据一致
+# 用法： ha-backup            暂停 -> 打包 -> 恢复容器
+#        ha-backup --no-stop  不暂停，直接打包（热备份，数据库可能不完整）
+
+SRC="/opt/homeassistant/config"
+DST="/root/ha-backups"
+TS=$(date +%Y%m%d-%H%M)
+TAR="$DST/ha-config-$TS.tar.gz"
+
+[ -d "$SRC" ] || { echo "找不到 $SRC，设备上没有 HA 配置"; exit 1; }
+mkdir -p "$DST"
+
+STOPPED=0
+if [ "$1" != "--no-stop" ]; then
+	if docker stop homeassistant >/dev/null 2>&1; then
+		STOPPED=1
+		echo "已暂停容器，保证数据库一致"
+	fi
+fi
+
+tar czf "$TAR" -C /opt/homeassistant config
+if [ $? -ne 0 ]; then
+	echo "打包失败"
+	[ "$STOPPED" = "1" ] && docker start homeassistant >/dev/null 2>&1
+	exit 1
+fi
+
+if [ "$STOPPED" = "1" ]; then
+	docker start homeassistant >/dev/null 2>&1 && echo "容器已恢复运行"
+fi
+
+echo
+echo "备份完成："
+ls -lh "$TAR"
+
+# 只保留最近 5 份
+ls -1t "$DST"/ha-config-*.tar.gz 2>/dev/null | tail -n +6 | while read -r old; do
+	rm -f "$old" && echo "已清理旧备份 $(basename "$old")"
+done
+
+IP=$(uci -q get network.lan.ipaddr)
+[ -n "$IP" ] || IP=$(uci -q get network.lan.ipaddr6)
+[ -n "$IP" ] || IP="192.168.12.1"
+
+echo
+echo "在电脑上执行下面这条命令把备份取回（Windows 可用 PowerShell 的 scp）："
+echo "  scp root@$IP:$TAR ."
