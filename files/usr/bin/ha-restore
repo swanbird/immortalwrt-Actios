@@ -1,0 +1,44 @@
+#!/bin/sh
+# 从备份包还原 Home Assistant 配置
+# 用法： ha-restore /root/ha-backups/ha-config-20261115-1800.tar.gz
+# 旧配置会被移到 config.bak-<时间戳>，可回退
+
+TAR="$1"
+
+if [ -z "$TAR" ] || [ ! -f "$TAR" ]; then
+	echo "用法： ha-restore <备份文件>"
+	echo
+	echo "可用备份："
+	ls -1t /root/ha-backups/ha-config-*.tar.gz 2>/dev/null | head -10
+	exit 1
+fi
+
+BASE="/opt/homeassistant"
+[ -d "$BASE" ] || mkdir -p "$BASE"
+
+STAMP=$(date +%Y%m%d-%H%M)
+if [ -d "$BASE/config" ]; then
+	mv "$BASE/config" "$BASE/config.bak-$STAMP" && \
+		echo "旧配置已备份为 $BASE/config.bak-$STAMP"
+fi
+
+if ! tar xzf "$TAR" -C "$BASE"; then
+	echo "解包失败，回滚旧配置"
+	[ -d "$BASE/config.bak-$STAMP" ] && rm -rf "$BASE/config" && mv "$BASE/config.bak-$STAMP" "$BASE/config"
+	exit 1
+fi
+
+if [ ! -d "$BASE/config" ]; then
+	echo "备份包结构异常（未找到 config 目录）"
+	exit 1
+fi
+
+echo "配置已还原，版本：$(cat "$BASE/config/.HA_VERSION" 2>/dev/null || echo 未知)"
+
+docker start homeassistant >/dev/null 2>&1
+if [ $? -ne 0 ]; then
+	echo "容器未运行，交给自愈脚本拉起"
+	sh /usr/bin/ha-ensure >/var/log/ha-ensure.log 2>&1 &
+fi
+
+echo "完成，稍等 1-2 分钟后访问 http://<设备IP>:8123"
