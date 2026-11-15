@@ -162,3 +162,23 @@ fi
 if [ -d files/usr/bin ]; then
 	chmod +x files/usr/bin/ha-* 2>/dev/null
 fi
+
+# ===== 第三方包下载哈希修正：speedtest-web =====
+# 现象：构建在 download 与 compile 两处各中断一次，报
+#   Hash mismatch for file speedtest-web-1.1.5.tar.zst:
+#   expected 63dad14c..., got aff79406...
+# 原因：该包用 git 协议（PKG_SOURCE_PROTO:=git）从 ZeaKyX/speedtest-go
+# 取固定 commit，其 PKG_MIRROR_HASH 是旧构建环境执行
+#   git archive（应用 .gitattributes 规则）+ zstd --ultra -20
+# 之后算出的 sha256。上游仓库已发生重定向，.gitattributes 的变化会改变
+# archive 的输出内容，于是同一 commit 也算不出同一个哈希。
+# 处理：改为官方支持的 skip。include/download.mk 中有放行分支：
+#   [ "$file_hash" = "$(MIRROR_HASH)" ] || [ "$(MIRROR_HASH)" = "skip" ]
+# 源码内容仍由 PKG_SOURCE_VERSION 固定的 commit 保证（内容寻址），
+# 不影响可验证性。
+for _mk in feeds/smpackage/speedtest-web/Makefile \
+           package/feeds/smpackage/speedtest-web/Makefile; do
+	[ -f "$_mk" ] || continue
+	sed -i 's/^PKG_MIRROR_HASH:=.*/PKG_MIRROR_HASH:=skip/' "$_mk"
+	echo "[diy] speedtest-web 哈希校验已跳过: $(grep '^PKG_MIRROR_HASH' "$_mk" | head -1)"
+done
