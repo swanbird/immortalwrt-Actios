@@ -1,0 +1,92 @@
+#!/bin/sh
+# Home Assistant 自愈脚本（由 /etc/rc.local 在开机时后台调用）
+# 职责：准备 swap → 拉起 dockerd → 首次运行时拉取最新稳定版镜像并创建容器
+# 日志：/var/log/ha-ensure.log
+
+IMAGE_REF="${HA_IMAGE:-ghcr.nju.edu.cn/home-assistant/home-assistant:stable}"
+IMAGE_LOCAL="homeassistant:stable"
+NAME="homeassistant"
+CFG_DIR="/opt/homeassistant/config"
+DATA_ROOT="/opt/docker"
+SWAPFILE="/swapfile"
+SWAP_MB="1024"
+
+LOG() { echo "[$(date '+%F %T')] $*"; }
+
+# ---------- 1. swap ----------
+if [ ! -f "$SWAPFILE" ]; then
+	LOG "未发现 swapfile，创建 ${SWAP_MB}MB（后台需要一点时间）"
+	dd if=/dev/zero of="$SWAPFILE" bs=1M count="$SWAP_MB" 2>/dev/null
+	chmod 600 "$SWAPFILE"
+	if mkswap "$SWAPFILE" >/dev/null 2>&1; then
+		LOG "swapfile 格式化完成"
+	else
+		LOG "mkswap 失败，跳过 swap"
+		rm -f "$SWAPFILE"
+	fi
+fi
+if [ -f "$SWAPFILE" ] && ! grep -qs "^$SWAPFILE" /proc/swaps; then
+	swapon -p 5 "$SWAPFILE" >/dev/null 2>&1 && LOG "swapfile 已启用"
+fi
+
+# ---------- 2. dockerd ----------
+mkdir -p "$DATA_ROOT"
+[ -x /etc/init.d/dockerd ] && /etc/init.d/dockerd enable >/dev/null 2>&1
+
+i=0
+while [ $i -lt 60 ]; do
+	docker info >/dev/null 2>&1 && break
+	[ -x /etc/init.d/dockerd ] && /etc/init.d/dockerd start >/dev/null 2>&1
+	i=$((i + 1))
+	sleep 5
+done
+if ! docker info >/dev/null 2>&1; then
+	LOG "dockerd 在 300 秒内仍未就绪，放弃本次自动启动"
+	exit 1
+fi
+LOG "dockerd 已就绪"
+
+mkdir -p "$CFG_DIR"
+
+# ---------- 3. 已有容器则直接启动 ----------
+if docker container inspect "$NAME" >/dev/null 2>&1; then
+	if docker start "$NAME" >/dev/null 2>&1; then
+		LOG "已启动现有容器 $NAME"
+	else
+		LOG "现有容器启动失败，尝试重建"
+		docker rm -f "$NAME" >/dev/null 2>&1
+	fi
+fi
+
+# ---------- 4. 拉取最新稳定版镜像 ----------
+if ! docker image inspect "$IMAGE_LOCAL" >/dev/null 2>&1; then
+	LOG "开始拉取 $IMAGE_REF（约 2.4GB，首次需要几分钟）"
+	n=0
+	while [ $n -lt 5 ]; do
+		if docker pull "$IMAGE_REF"; then
+			break
+		fi
+		n=$((n + 1))
+		LOG "拉取失败，第 $n 次重试（共 5 次）"
+		sleep 30
+	done
+	if ! docker image inspect "$IMAGE_REF" >/dev/null 2>&1; then
+		LOG "镜像拉取失败，请检查网络后手动执行：sh /usr/bin/ha-ensure"
+		exit 1
+	fi
+	docker tag "$IMAGE_REF" "$IMAGE_LOCAL"
+	LOG "镜像已就位并标记为 $IMAGE_LOCAL"
+fi
+
+# ---------- 5. 创建容器 ----------
+docker run -d --name "$NAME" --restart unless-stopped --network host \
+	-v "$CFG_DIR":/config \
+	-e TZ=Asia/Shanghai \
+	"$IMAGE_LOCAL" >/dev/null 2>&1
+if [ $? -eq 0 ]; then
+	LOG "容器已创建，Home Assistant 正在启动（首次初始化约 3-5 分钟）"
+	LOG "访问地址：http://<设备IP>:8123"
+else
+	LOG "容器创建失败"
+	exit 1
+fi
