@@ -126,3 +126,28 @@ cat > target/linux/msm89xx/patches-6.12/999-wcn36xx-gtk-group-tx.patch <<'WCN36X
  	/* IPv6 addresses for WoWLAN */
 WCN36XX_PATCH_EOF
 echo "[diy] wcn36xx GTK patch: $(wc -l < target/linux/msm89xx/patches-6.12/999-wcn36xx-gtk-group-tx.patch) lines"
+
+# ===== 补回 libffi 包（上游漂移修复） =====
+# 现象：编译到 glib2 时中断
+#   Package glib2-gobject is missing dependencies for the following libraries: libffi.so.8
+# 原因：锁定的核心源码树（24.10 时期）里没有 package/libs/libffi，而 feeds 中的
+#       glib2 仍声明 DEPENDS:=... +libffi，于是 libffi 永远不会被编译进来。
+# 处理：从 immortalwrt master 稀疏检出该包补入源码树。
+if [ ! -d package/libs/libffi ]; then
+	echo "[diy] 补入 libffi 包（glib2 依赖）"
+	rm -rf /tmp/iw-src
+	if git clone --depth 1 --filter=blob:none --sparse \
+		https://github.com/immortalwrt/immortalwrt /tmp/iw-src >/dev/null 2>&1; then
+		( cd /tmp/iw-src && git sparse-checkout set package/libs/libffi ) >/dev/null 2>&1
+		if [ -d /tmp/iw-src/package/libs/libffi ]; then
+			mkdir -p package/libs
+			cp -r /tmp/iw-src/package/libs/libffi package/libs/
+			echo "[diy] libffi 已就位，共 $(find package/libs/libffi -type f | wc -l) 个文件"
+		else
+			echo "[diy] 警告：稀疏检出未得到 libffi 目录"
+		fi
+	else
+		echo "[diy] 警告：克隆 immortalwrt 失败，glib2 可能仍会编译失败"
+	fi
+	rm -rf /tmp/iw-src
+fi
