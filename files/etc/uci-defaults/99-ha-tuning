@@ -1,0 +1,29 @@
+#!/bin/sh
+# Home Assistant 运行环境调优 —— 首次启动执行一次，之后自动删除
+#
+# 本机规格：MSM8916 / 4 核 / 384MB RAM / 6.6G eMMC 单分区
+# Home Assistant 常驻约 200MB，dockerd + containerd 再占 80~100MB，
+# 物理内存几乎不够用，swap 是能否稳定运行的决定因素。
+
+# ---------- 1. zram 压缩 swap 尺寸 ----------
+# /etc/init.d/zram 默认取 RAM/2（本机 = 192MB）。实测该值在跑 HA 时长期
+# 打满 96%（188/192MB），说明换出需求明显大于默认值，超出部分会被挤到
+# eMMC 上的 swapfile，拖慢 HA 并损耗闪存。
+# 这里提到 RAM 的 2/3（约 256MB）。zram 是压缩内存，标称 256MB 实际物理
+# 占用通常只有 80~130MB，代价远低于写 eMMC。
+# 执行顺序：本脚本由 /etc/init.d/boot（START=10）执行，
+#           /etc/init.d/zram 是 START=15，所以设置能被 zram 读到。
+RAM_KB=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
+if [ -n "$RAM_KB" ] && [ "$RAM_KB" -gt 0 ]; then
+	ZRAM_MB=$(( RAM_KB / 1024 * 2 / 3 ))
+	[ "$ZRAM_MB" -lt 64 ] && ZRAM_MB=64
+	uci -q set system.@system[0].zram_size_mb="$ZRAM_MB"
+	uci -q commit system
+fi
+
+# ---------- 2. docker 数据目录 ----------
+# /opt 在 rootfs 上（单分区，刷机会清空），这里只保证目录存在。
+# HA 的 2.4GB 镜像与配置都落在 /opt/docker 与 /opt/homeassistant。
+mkdir -p /opt/docker /opt/homeassistant/config
+
+exit 0
