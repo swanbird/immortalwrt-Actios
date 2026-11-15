@@ -196,28 +196,21 @@ for _mk in feeds/smpackage/speedtest-web/Makefile \
 	echo "[diy] speedtest-web upx 压缩已禁用: $(grep -c '/bin/true' "$_mk") 处"
 done
 
-# ===== 补入 modeminfo CLI（luci-app-modeminfo 的 postinst 依赖） =====
-# 现象：所有包编译完成后，在 package/install 阶段中断
-#   luci-app-modeminfo.postinst-pkg: line 2: /usr/bin/modeminfo: No such file or directory
-#   postinst script has failed with exit code 127
-# 原因：4IceG/luci-app-modeminfo 只是前端（DEPENDS 仅 +comgt），调用 /usr/bin/modeminfo
-#       的 CLI 是独立包，不存在于任何已配置的 feed（smpackage/packages/openstick 均无）。
-# 处理：从 kenzok8/jell（smpackage 作者的另一个仓库）稀疏检出 modeminfo CLI，
-#       并由 config 显式启用 CONFIG_PACKAGE_modeminfo=y。
-if [ ! -d package/modeminfo ]; then
-	echo "[diy] 补入 modeminfo CLI（luci-app-modeminfo 依赖）"
-	rm -rf /tmp/jell-src
-	if git clone --depth 1 --filter=blob:none --sparse \
-		https://github.com/kenzok8/jell /tmp/jell-src >/dev/null 2>&1; then
-		( cd /tmp/jell-src && git sparse-checkout set modeminfo ) >/dev/null 2>&1
-		if [ -f /tmp/jell-src/modeminfo/Makefile ]; then
-			cp -r /tmp/jell-src/modeminfo package/modeminfo
-			echo "[diy] modeminfo CLI 已就位，共 $(find package/modeminfo -type f | wc -l) 个文件"
-		else
-			echo "[diy] 警告：稀疏检出未得到 modeminfo 目录"
-		fi
-	else
-		echo "[diy] 警告：克隆 kenzok8/jell 失败，luci-app-modeminfo 的 postinst 可能仍会失败"
-	fi
-	rm -rf /tmp/jell-src
+# ===== luci-app-modeminfo postinst 防护 =====
+# 现象：所有包编译完成后，package/install 阶段中断（历史两轮错误）：
+#   a) luci-app-modeminfo.postinst-pkg: line 2: /usr/bin/modeminfo: No such file or directory
+#   b) check_data_file_clashes: Package modeminfo wants to install file .../usr/bin/modeminfo
+#      But that file is already provided by package luci-app-modeminfo
+# 真相：luci-app-modeminfo 的 root/ 目录已自带 /usr/bin/modeminfo，rootfs 安装本身没问题；
+#       但其 postinst 缺少 IPKG_INSTROOT 防护——构建时 opkg 以 IPKG_INSTROOT=<rootfs> 执行
+#       postinst，脚本里的 /usr/bin/modeminfo 按"构建机"路径解析，必然失败 exit 127。
+#       而额外补装的 jell/modeminfo CLI 反而与前端包的文件冲突（opkg 致命错）。
+# 处理：撤掉 CLI 包，给 postinst 两行加标准防护（仅真实设备上执行）。
+_lm=package/luci-app-modeminfo/Makefile
+if [ -f "$_lm" ] && grep -q "/usr/bin/modeminfo firstinstall" "$_lm"; then
+	sed -i \
+		-e 's@^\tchmod +x /usr/bin/modeminfo$@\t[ -n "$${IPKG_INSTROOT}" ] || chmod +x /usr/bin/modeminfo@' \
+		-e 's@^\t/usr/bin/modeminfo firstinstall$@\t[ -n "$${IPKG_INSTROOT}" ] || /usr/bin/modeminfo firstinstall@' \
+		"$_lm"
+	echo "[diy] luci-app-modeminfo postinst 已加 IPKG_INSTROOT 防护"
 fi
