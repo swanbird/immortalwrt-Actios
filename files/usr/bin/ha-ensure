@@ -9,11 +9,34 @@ NAME="homeassistant"
 CFG_DIR="/opt/homeassistant/config"
 DATA_ROOT="/opt/docker"
 SWAPFILE="/swapfile"
-SWAP_MB="1024"
+SWAP_MB_PREF=1024	# 目标 1GB，与现网一致
+SWAP_MB_MIN=256		# 低于此值就不折腾了
+SWAP_RESERVE=2800	# 给 docker 镜像(2.4G) + 系统留出的空间(MB)
 
 LOG() { echo "[$(date '+%F %T')] $*"; }
 
 # ---------- 1. swap ----------
+# 按剩余空间自适应：/opt 与 /swapfile 同在 rootfs 上，先保证 docker
+# 的 2.4GB 镜像放得下，剩下的才给 swap，避免 dd 把分区写满导致刷机后
+# 拉不动镜像。
+SWAP_MB=$SWAP_MB_PREF
+AVAIL_MB=$(df -m / 2>/dev/null | tail -1 | awk '{print $4}')
+case "$AVAIL_MB" in
+	''|*[!0-9]*) AVAIL_MB=0 ;;
+esac
+if [ "$AVAIL_MB" -gt 0 ]; then
+	ROOM_MB=$(( AVAIL_MB - SWAP_RESERVE ))
+	if [ "$ROOM_MB" -lt "$SWAP_MB" ]; then
+		SWAP_MB=$ROOM_MB
+	fi
+	if [ "$SWAP_MB" -lt "$SWAP_MB_MIN" ]; then
+		LOG "剩余空间仅 ${AVAIL_MB}MB，swapfile 降至最低 ${SWAP_MB_MIN}MB"
+		SWAP_MB=$SWAP_MB_MIN
+	else
+		LOG "剩余空间 ${AVAIL_MB}MB，swapfile 使用 ${SWAP_MB}MB"
+	fi
+fi
+
 if [ ! -f "$SWAPFILE" ]; then
 	LOG "未发现 swapfile，创建 ${SWAP_MB}MB（后台需要一点时间）"
 	dd if=/dev/zero of="$SWAPFILE" bs=1M count="$SWAP_MB" 2>/dev/null
