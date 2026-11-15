@@ -1,0 +1,32 @@
+#!/bin/sh
+# 修正 br-lan 的静态端口列表 —— 首次启动执行一次
+#
+# 背景：本机型 board.json 写的是 "thwc,ufi001c"，其中
+#   "network": { "lan": { "device": "eth0" } }
+# config_generate 据此生成 `list ports 'eth0'`。但这块板子上根本没有
+# eth0（`ip link show eth0` → Device "eth0" does not exist），
+# 所以 br-lan 的静态成员实际是空的，运行中的成员只有 AP 起来后
+# 由 netifd 动态加入的 phy0-ap0。日志可证：
+#   br-lan: port 1(phy0-ap0) entered forwarding state
+#
+# 关于「界面里看不到 AP」：这是 OpenWrt 的既定设计，不是缺陷。
+# 无线接口不写进 bridge 的静态 ports，靠 wireless 里的
+#   option network 'lan'
+# 在 AP 启动后由 netifd 动态 addif。若硬把 phy0-ap0 写进 ports，反而会
+# 和 hostapd 抢时序（netifd 启动时该接口尚不存在）。
+#
+# 本脚本只做一件事：删掉虚构的 eth0 端口。目的：
+#   1) 避免未来插入 USB 网卡被内核枚举成 eth0 后静默并入 LAN（安全面扩大）
+#   2) 避免 LuCI「网络 → 接口 → 设备」里长期显示一个不存在的端口
+# 桥接结果与现状完全一致，纯无线 LAN。
+
+for _d in $(uci -q show network 2>/dev/null \
+		| sed -n "s/^network\.\(@device\[[0-9]*\]\)\.name='br-lan'\$/\1/p"); do
+	if [ "$(uci -q get "network.$_d.ports")" = "eth0" ]; then
+		uci -q delete "network.$_d.ports"
+		echo "[net-fix] 已从 $_d (br-lan) 移除不存在的端口 eth0"
+	fi
+done
+uci -q commit network
+
+exit 0
