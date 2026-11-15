@@ -151,3 +151,14 @@ if [ ! -d package/libs/libffi ]; then
 	fi
 	rm -rf /tmp/iw-src
 fi
+
+# ===== 可执行位修复 =====
+# files/ 下的脚本通过 GitHub API 推送时执行位会丢失（一律 100644），
+# 而 uci-defaults 需要可执行才会被 /etc/init.d/boot 执行。
+if [ -d files/etc/uci-defaults ]; then
+	chmod +x files/etc/uci-defaults/* 2>/dev/null
+	echo "[diy] uci-defaults 可执行位已修复: $(ls files/etc/uci-defaults 2>/dev/null | tr '\n' ' ')"
+fi
+if [ -d files/usr/bin ]; then
+	chmod +x files/usr/bin/ha-* 2>/dev/null
+fi
