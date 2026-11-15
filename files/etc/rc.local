@@ -22,4 +22,15 @@ if command -v uci >/dev/null 2>&1; then
 	fi
 fi
 
+# ---- Docker / Home Assistant 自愈 ----
+# 首次开机：创建 swapfile、启用 dockerd、（镜像缺失时）拉取最新稳定版 Home Assistant
+# 并创建容器；已存在容器则直接拉起。日志: /var/log/ha-ensure.log
+# 手动命令: ha-backup / ha-restore / ha-update / sh /usr/bin/ha-ensure
+mkdir -p /opt/docker /opt/homeassistant/config
+chmod +x /usr/bin/ha-ensure /usr/bin/ha-backup /usr/bin/ha-restore /usr/bin/ha-update 2>/dev/null
+[ -x /etc/init.d/dockerd ] && /etc/init.d/dockerd enable >/dev/null 2>&1
+if command -v docker >/dev/null 2>&1; then
+	sh /usr/bin/ha-ensure >/var/log/ha-ensure.log 2>&1 &
+fi
+
 exit 0
