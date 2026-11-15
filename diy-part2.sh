@@ -35,3 +35,94 @@ git clone --depth 1 https://github.com/lkiuyu/luci-app-temp-status package/luci-
 git clone --depth 1 https://github.com/4IceG/luci-app-modeminfo package/luci-app-modeminfo || true
 # luci-app-atinout + atinout 命令行工具：仓库根目录下含两个包，整体克隆
 git clone --depth 1 https://github.com/4IceG/luci-app-atinout package/atinout-src || true
+
+# ===== wcn36xx：修复 AP 模式下广播/组播帧无法被终端解密 =====
+# 现象：AP 模式下所有无线终端收不到网关发出的广播/组播（ARP、mDNS 全灭），
+#       单播双向正常。原因是驱动把组密钥注册成 RX_ONLY，且组播帧交给固件时
+#       用的是单播 DPU 描述符/签名，固件没有可用于发送的 GTK。
+# 处理：① 组密钥方向改为 TX_RX；② 组播帧改用 CONFIG_BSS_RSP 返回的 GTK
+#       描述符与签名；③ 顺带打印 GTK 签名，便于用 debug_mask 验证。
+mkdir -p target/linux/msm89xx/patches-6.12
+cat > target/linux/msm89xx/patches-6.12/999-wcn36xx-gtk-group-tx.patch <<'WCN36XX_PATCH_EOF'
+--- a/drivers/net/wireless/ath/wcn36xx/txrx.c
++++ b/drivers/net/wireless/ath/wcn36xx/txrx.c
+@@ -554,8 +554,17 @@
+ 	} else {
+ 		__vif_priv = get_vif_by_addr(wcn, hdr->addr2);
+ 		bd->sta_index = __vif_priv->self_sta_index;
+-		bd->dpu_desc_idx = __vif_priv->self_dpu_desc_index;
+-		bd->dpu_sign = __vif_priv->self_ucast_dpu_sign;
++		if (bcast && __vif_priv->bcast_dpu_sign) {
++			/* Group addressed frames are protected with the GTK,
++			 * which the firmware keeps in its own DPU descriptor
++			 * with its own signature.
++			 */
++			bd->dpu_desc_idx = __vif_priv->bcast_dpu_desc_index;
++			bd->dpu_sign = __vif_priv->bcast_dpu_sign;
++		} else {
++			bd->dpu_desc_idx = __vif_priv->self_dpu_desc_index;
++			bd->dpu_sign = __vif_priv->self_ucast_dpu_sign;
++		}
+ 	}
+ 
+ 	if (is_data_qos) {
+--- a/drivers/net/wireless/ath/wcn36xx/smd.c
++++ b/drivers/net/wireless/ath/wcn36xx/smd.c
+@@ -1861,11 +1861,13 @@
+ 	wcn36xx_dbg(WCN36XX_DBG_HAL,
+ 		    "hal config bss rsp status %d bss_idx %d dpu_desc_index %d"
+ 		    " sta_idx %d self_idx %d bcast_idx %d mac %pM"
+-		    " power %d ucast_dpu_signature %d\n",
++		    " power %d ucast_dpu_signature %d"
++		    " bcast_dpu_desc %d bcast_dpu_signature %d\n",
+ 		    params->status, params->bss_index, params->dpu_desc_index,
+ 		    params->bss_sta_index, params->bss_self_sta_index,
+ 		    params->bss_bcast_sta_idx, params->mac,
+-		    params->tx_mgmt_power, params->ucast_dpu_signature);
++		    params->tx_mgmt_power, params->ucast_dpu_signature,
++		    params->bcast_dpu_desc_indx, params->bcast_dpu_signature);
+ 
+ 	vif_priv->bss_index = params->bss_index;
+ 
+@@ -1876,6 +1878,8 @@
+ 	}
+ 
+ 	vif_priv->self_ucast_dpu_sign = params->ucast_dpu_signature;
++	vif_priv->bcast_dpu_desc_index = params->bcast_dpu_desc_indx;
++	vif_priv->bcast_dpu_sign = params->bcast_dpu_signature;
+ 
+ 	return 0;
+ }
+@@ -2130,7 +2134,13 @@
+ 	msg_body.num_keys = 1;
+ 	msg_body.keys[0].id = keyidx;
+ 	msg_body.keys[0].unicast = 0;
+-	msg_body.keys[0].direction = WCN36XX_HAL_RX_ONLY;
++	/* The group key protects both directions: an AP encrypts group
++	 * addressed traffic with it, and every peer both decrypts with it and
++	 * encrypts its own group addressed frames with it. Marking it RX only
++	 * leaves the firmware without a TX key for broadcast/multicast, so the
++	 * frames leave the AP in a form no station can decode.
++	 */
++	msg_body.keys[0].direction = WCN36XX_HAL_TX_RX;
+ 	msg_body.keys[0].pae_role = 0;
+ 	msg_body.keys[0].length = keylen;
+ 	memcpy(msg_body.keys[0].key, key, keylen);
+--- a/drivers/net/wireless/ath/wcn36xx/wcn36xx.h
++++ b/drivers/net/wireless/ath/wcn36xx/wcn36xx.h
+@@ -139,6 +139,13 @@
+ 	u8 self_sta_index;
+ 	u8 self_dpu_desc_index;
+ 	u8 self_ucast_dpu_sign;
++	/* Returned from WCN36XX_HAL_CONFIG_BSS_RSP: DPU descriptor index and
++	 * signature of the group (GTK) key. Group addressed frames have to be
++	 * handed to the firmware with these, otherwise they get encrypted with
++	 * the pairwise key and no peer is able to decrypt them.
++	 */
++	u8 bcast_dpu_desc_index;
++	u8 bcast_dpu_sign;
+ 
+ #if IS_ENABLED(CONFIG_IPV6)
+ 	/* IPv6 addresses for WoWLAN */
+WCN36XX_PATCH_EOF
+echo "[diy] wcn36xx GTK patch: $(wc -l < target/linux/msm89xx/patches-6.12/999-wcn36xx-gtk-group-tx.patch) lines"
