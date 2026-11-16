@@ -45,6 +45,14 @@ git clone --depth 1 https://github.com/4IceG/luci-app-atinout package/atinout-sr
 #       用的是单播 DPU 描述符/签名，固件没有可用于发送的 GTK。
 # 处理：① 组密钥方向改为 TX_RX；② 组播帧改用 CONFIG_BSS_RSP 返回的 GTK
 #       描述符与签名；③ 顺带打印 GTK 签名，便于用 debug_mask 验证。
+#
+# 【重要】这个平台 wcn36xx 是通过 backports(backports-6.18.26) 编译的
+#   （modinfo 显示 depends: mac80211,cfg80211,compat；编译日志有 backports tarball），
+#   而不是内核树 target/linux/msm89xx/patches-6.12 直接编译。
+#   因此补丁真正必须落到 backports 的打补丁目录：
+#     package/kernel/mac80211/patches/ath/  （补丁路径前缀 a/drivers/... 与之匹配）
+#   之前只写内核树 patches-6.12 导致补丁从未进入 wcn36xx.ko（模块里查不到
+#   bcast_dpu_desc 字符串可证）。现在两处都放，backports 目录为准。
 mkdir -p target/linux/msm89xx/patches-6.12
 cat > target/linux/msm89xx/patches-6.12/999-wcn36xx-gtk-group-tx.patch <<'WCN36XX_PATCH_EOF'
 --- a/drivers/net/wireless/ath/wcn36xx/txrx.c
@@ -128,7 +136,13 @@ cat > target/linux/msm89xx/patches-6.12/999-wcn36xx-gtk-group-tx.patch <<'WCN36X
  #if IS_ENABLED(CONFIG_IPV6)
  	/* IPv6 addresses for WoWLAN */
 WCN36XX_PATCH_EOF
-echo "[diy] wcn36xx GTK patch: $(wc -l < target/linux/msm89xx/patches-6.12/999-wcn36xx-gtk-group-tx.patch) lines"
+echo "[diy] wcn36xx GTK patch(内核树): $(wc -l < target/linux/msm89xx/patches-6.12/999-wcn36xx-gtk-group-tx.patch) lines"
+
+# 关键：投放到 backports(mac80211) 的 ath 补丁目录 —— 这才是真正编译 wcn36xx 的地方
+mkdir -p package/kernel/mac80211/patches/ath
+cp target/linux/msm89xx/patches-6.12/999-wcn36xx-gtk-group-tx.patch \
+   package/kernel/mac80211/patches/ath/999-wcn36xx-gtk-group-tx.patch
+echo "[diy] wcn36xx GTK patch(backports/ath): $(wc -l < package/kernel/mac80211/patches/ath/999-wcn36xx-gtk-group-tx.patch) lines"
 
 # ===== 补回 libffi 包（上游漂移修复） =====
 # 现象：编译到 glib2 时中断
