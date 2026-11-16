@@ -28,13 +28,16 @@ sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' feeds/luci/collections/luci/M
 # git clone https://github.com/lkiuyu/luci-app-temp-status package/luci-app-temp-status
 # git clone https://github.com/lkiuyu/DbusSmsForwardCPlus package/DbusSmsForwardCPlus
 
-# ===== 补充：不在官方 feed / small-package 中的三个插件（按用户清单要求） =====
+# ===== 补充：不在官方 feed / small-package 中的两个插件（按用户清单要求） =====
 # luci-app-temp-status：gSpotx2f 上游，取 lkiuyu 的适配版
 git clone --depth 1 https://github.com/lkiuyu/luci-app-temp-status package/luci-app-temp-status || true
-# luci-app-modeminfo：4IceG 上游，依赖 comgt（feed 内已有）
-git clone --depth 1 https://github.com/4IceG/luci-app-modeminfo package/luci-app-modeminfo || true
 # luci-app-atinout + atinout 命令行工具：仓库根目录下含两个包，整体克隆
 git clone --depth 1 https://github.com/4IceG/luci-app-atinout package/atinout-src || true
+
+# 注：luci-app-modeminfo（4IceG）已撤出固件，原因：
+#   其 Makefile 声明 DEPENDS:=+modeminfo，但上游从未提供可用的 modeminfo CLI 包；
+#   补第三方 CLI 又与前端包 root/ 自带的 /usr/bin/modeminfo 文件冲突（opkg 致命错）。
+#   风险大于收益（设备上已有 3ginfo-lite / modemband 覆盖同类功能），不再编译。
 
 # ===== wcn36xx：修复 AP 模式下广播/组播帧无法被终端解密 =====
 # 现象：AP 模式下所有无线终端收不到网关发出的广播/组播（ARP、mDNS 全灭），
@@ -195,22 +198,3 @@ for _mk in feeds/smpackage/speedtest-web/Makefile \
 	sed -i 's|/bin/upx --lzma --best|/bin/true|' "$_mk"
 	echo "[diy] speedtest-web upx 压缩已禁用: $(grep -c '/bin/true' "$_mk") 处"
 done
-
-# ===== luci-app-modeminfo postinst 防护 =====
-# 现象：所有包编译完成后，package/install 阶段中断（历史两轮错误）：
-#   a) luci-app-modeminfo.postinst-pkg: line 2: /usr/bin/modeminfo: No such file or directory
-#   b) check_data_file_clashes: Package modeminfo wants to install file .../usr/bin/modeminfo
-#      But that file is already provided by package luci-app-modeminfo
-# 真相：luci-app-modeminfo 的 root/ 目录已自带 /usr/bin/modeminfo，rootfs 安装本身没问题；
-#       但其 postinst 缺少 IPKG_INSTROOT 防护——构建时 opkg 以 IPKG_INSTROOT=<rootfs> 执行
-#       postinst，脚本里的 /usr/bin/modeminfo 按"构建机"路径解析，必然失败 exit 127。
-#       而额外补装的 jell/modeminfo CLI 反而与前端包的文件冲突（opkg 致命错）。
-# 处理：撤掉 CLI 包，给 postinst 两行加标准防护（仅真实设备上执行）。
-_lm=package/luci-app-modeminfo/Makefile
-if [ -f "$_lm" ] && grep -q "/usr/bin/modeminfo firstinstall" "$_lm"; then
-	sed -i \
-		-e 's@^\tchmod +x /usr/bin/modeminfo$@\t[ -n "$${IPKG_INSTROOT}" ] || chmod +x /usr/bin/modeminfo@' \
-		-e 's@^\t/usr/bin/modeminfo firstinstall$@\t[ -n "$${IPKG_INSTROOT}" ] || /usr/bin/modeminfo firstinstall@' \
-		"$_lm"
-	echo "[diy] luci-app-modeminfo postinst 已加 IPKG_INSTROOT 防护"
-fi
