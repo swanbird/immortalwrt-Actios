@@ -198,3 +198,30 @@ for _mk in feeds/smpackage/speedtest-web/Makefile \
 	sed -i 's|/bin/upx --lzma --best|/bin/true|' "$_mk"
 	echo "[diy] speedtest-web upx 压缩已禁用: $(grep -c '/bin/true' "$_mk") 处"
 done
+
+# ===== USB gadget PID: D001 -> 4EE2（修复 Windows 下 RNDIS 不识别） =====
+# 现象：刷机后 Windows 只枚举出 ADB（Android Composite ADB Interface），
+#       RNDIS 网卡完全不出现（设备管理器里无 Remote NDIS 设备）。
+# 根因：openstick feed 的 gc 二进制把 gadget PID 硬编码为 0xD001(Google)。
+#       而 Windows 上 Google ADB 驱动(oem35/182/307.inf)含一条无 MI 后缀的
+#       "USB\VID_18D1&PID_D001" 匹配规则，会把整个 USB 设备当单接口 ADB 绑走，
+#       usbccgp.sys 复合驱动没机会接管 -> MI_00 的 RNDIS 接口永远不被枚举。
+# 处理：把 gc 二进制里唯一的 "0xd001" 原地替换为 "0x4ee2"（同为 6 字节，等长）。
+#       0x4EE2 在 Windows 驱动里只有 &MI_01=ADB 的匹配，MI_00 留给系统标准
+#       RNDIS 驱动 -> 复合枚举正常(RNDIS + ADB 同时出现)。
+#       这样无需改 Windows 驱动、也无需动设备端 usb0 的 WAN 配置。
+for _gcbin in \
+    feeds/openstick/utils/gc/files/usr/bin/gc \
+    feeds/openstick/utils/gc/src/gc \
+    package/feeds/openstick/gc/files/usr/bin/gc; do
+    [ -f "$_gcbin" ] || continue
+    if grep -aqi '0xd001' "$_gcbin"; then
+        sed -i -e 's/0xd001/0x4ee2/g' -e 's/0xD001/0x4EE2/g' "$_gcbin"
+        echo "[diy] gc PID D001->4EE2: $_gcbin"
+    fi
+done
+
+# 兜底：全树搜含 0xd001 的 gc 二进制（兼容 feed 路径变化）
+if ! grep -raqil '0xd001' feeds/openstick 2>/dev/null; then
+    echo "[diy] gc PID 已全部为 4EE2（或 feed 未就位）"
+fi
